@@ -1,0 +1,10 @@
+{
+  "rust_toolchain": "nightly-2026-11-12",
+  "rust_commit": "3ef0c22cdb86ac42dc6b8f0f1ec36857daa6f2a1",
+  "rust_version": "1.102.0-nightly",
+  "llvm_version": "23.1.5",
+  "source_url": "https://static.rust-lang.org/dist/2026-11-12/rustc-nightly-src.tar.xz",
+  "source_sha256": "cf6956f674816309b4a2356e7813178b5fc0c7ee346ac45ae0092407fe3a85ee",
+  "llvm_base": "0a5579eb649d3634a9c30ac873300cc2944fa070",
+  "llvm_commit": "930e0ff819e61ab7894f0a2f216c2291dd58f270"
+}

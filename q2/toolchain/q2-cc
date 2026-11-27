@@ -1,0 +1,6 @@
+#!/bin/sh
+# C compiler for build scripts (rusqlite's SQLite) on mipsel-q2-linux-gnu: the
+# X2000's FP64 and NaN-2008, glibc 2.28's headers from the sysroot. The host's
+# /usr/include is never searched.
+exec clang --target=mipsel-linux-gnu -march=mips32r2 -mfp64 -mnan=2008 -mabs=2008 -mabicalls \
+  -nostdlibinc -isystem "$Q2_SYSROOT/usr/include/mipsel-linux-gnu" -isystem "$Q2_SYSROOT/usr/include" "$@"
