@@ -68,9 +68,17 @@ not vectorize `f32` loops. Scalar code calls libm for all three. The X2000
 cost model returns an invalid cost for the vector form of these three
 intrinsics, so no vectorizer widens them (`libm_log2`, `libm_exp2`,
 `libm_fma` in `tests/perf/x2000_cost/sat.ll` check it). Vector IR written by
-hand (`std::simd`) would still get the wrong instructions; the player has
-none. A backend fix needs separate nodes for the intrinsics and is not in
-this patch.
+hand (`std::simd`) still gets the wrong instructions from the pinned
+compiler; the player has none.
+
+The LLVM fork's `q2/23.1` fixes all three from `c03457cc`, which the pin
+does not include yet: vector `llvm.log2` and `llvm.exp2` become libm calls per
+lane, `flog2` and `fexp2` are selected only for their intrinsics, and `fma`
+selects `fmadd` with the addend in place (upstream `cf40f87a82`).
+`tests/perf/x2000_cost/vector_math.py --llc LLC` compares every lane of the
+three, and of the `fmadd.w` and `fexp2.w` intrinsics, with libm under
+qemu-user. The pinned compiler's `llc` gets 4,044 to 16,787 lanes wrong per
+operation; the fork's gets none.
 
 ### Cost model
 
