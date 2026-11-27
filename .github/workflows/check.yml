@@ -1,0 +1,38 @@
+name: Toolchain controls
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: toolchain-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  source-controls:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Check target and verify source pairing
+        run: |
+          python3 -m unittest discover -s tools -p 'test_*.py'
+          source_root=$(mktemp -d)
+          python3 tools/x2000_toolchain.py spec q2/toolchain/mipsel-q2-linux-gnu.json "$source_root/target.json"
+          for source in rust llvm; do
+            pin=$(python3 -c 'import json,sys; print(json.load(open("q2/toolchain/llvm/pin.json"))[sys.argv[1] + "_commit"])' "$source")
+            [[ $pin =~ ^[0-9a-f]{40}$ ]]
+            repository=$source
+            if [[ $source = llvm ]]; then repository=llvm-project; fi
+            git init --quiet --bare "$source_root/$source"
+            git -C "$source_root/$source" remote add origin "https://github.com/q2-nova/$repository.git"
+            git -C "$source_root/$source" config remote.origin.promisor true
+            git -C "$source_root/$source" config remote.origin.partialclonefilter tree:0
+            git -C "$source_root/$source" fetch --quiet --filter=tree:0 --depth=32 origin "$pin"
+            git -C "$source_root/$source" update-ref HEAD FETCH_HEAD
+          done
+          python3 tools/x2000_toolchain.py check-sources --rust "$source_root/rust" --llvm "$source_root/llvm"
