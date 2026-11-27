@@ -6,6 +6,8 @@ MSA cost model, lowering fixes, and scheduler. The separately built
 q2-os Buildroot SDK supplies the target headers, libraries, GCC runtime, and
 linker. [Compiler design](docs/x2000-toolchain.md) · [Measured instruction costs](docs/x2000-msa.md)
 
+Original Q2 material is GPL-3.0-or-later. [Licenses and attribution](NOTICE.md)
+
 ## Build on x86-64 Linux
 
 Use Python 3, Git, GNU tar with xz support, CMake, Ninja, and the host tools
