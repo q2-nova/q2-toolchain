@@ -109,3 +109,13 @@ The SDK relocation receipt provides its `sdk` path and `archive_sha256` from the
 Review the actual archive and qualification record, including licenses, host paths and any redistribution restrictions. A trusted operator uploads the reviewed `compiler.tar.gz` and `qualification.json` to an intake draft release. Dispatch **Stage a compiler release** on the default branch using `stage`, the exact producer recipe commit, intake tag, unused draft tag and reviewed bundle SHA-256. The workflow checks the producer and upstream lock, archive hash and qualification record and attaches the same bytes to a new draft. Keep the intake draft unpublished. Review the new draft and its downloads before deciding to publish.
 
 Dispatch `validate` to exercise admission with a generated fixture. The validation job has read-only permissions and rejects the fixture in release mode. Both workflow modes use hosted Linux runners for validation or staging. Building and qualifying an actual compiler require a separate build host, a relocated SDK and compatible QEMU; they run using the local commands above.
+
+### Build the compiler in GitHub Actions
+
+Dispatch **Build the X2000 compiler** on `main`. The optional `producer`
+selects an exact recipe commit in its history. A hosted Linux x86-64 runner
+fetches the selected Rust and LLVM sources, builds stage-2 rustc and Clang,
+checks the installation and uploads `q2-compiler-linux-x86_64`. This Actions
+artifact contains `compiler.tar.gz` and `SHA256SUMS`. Use the run ID and
+archive hash to select the candidate for SDK/QEMU qualification. Promote the
+qualified archive once, then reuse it for player and daemon builds.

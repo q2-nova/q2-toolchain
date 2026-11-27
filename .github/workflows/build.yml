@@ -1,0 +1,70 @@
+name: Build the X2000 compiler
+on:
+  workflow_dispatch:
+    inputs:
+      producer:
+        description: Exact toolchain recipe commit on main (defaults to workflow commit)
+        type: string
+permissions:
+  contents: read
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      PRODUCER: ${{ inputs.producer || github.sha }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prepare runner disk and build tools
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+          echo "Q2_X2000_WORK=$RUNNER_TEMP/x2000" >> "$GITHUB_ENV"
+          df -h "$RUNNER_TEMP"
+          cmake --version
+          ninja --version
+          g++ --version
+      - name: Select exact recipe and source commits
+        run: |
+          [[ "$PRODUCER" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$PRODUCER" "$GITHUB_SHA"
+          mkdir "$RUNNER_TEMP/recipe"
+          git archive "$PRODUCER" | tar -x -C "$RUNNER_TEMP/recipe"
+          cd "$RUNNER_TEMP/recipe"
+          lock=q2/toolchain/llvm/pin.json
+          for source in rust llvm-project; do
+            if [[ "$source" == rust ]]; then
+              sha=$(jq -er .rust_commit "$lock")
+              options=(--filter=blob:none --depth=1)
+            else
+              sha=$(jq -er .llvm_commit "$lock")
+              options=(--depth=3)
+            fi
+            repo="$RUNNER_TEMP/$source.git"
+            git init --quiet --bare "$repo"
+            git -C "$repo" fetch --quiet "${options[@]}" "https://github.com/q2-nova/$source.git" "$sha"
+            git -C "$repo" update-ref HEAD FETCH_HEAD
+          done
+          python3 tools/x2000_toolchain.py check-sources --rust "$RUNNER_TEMP/rust.git" --llvm "$RUNNER_TEMP/llvm-project.git"
+      - name: Bootstrap stage-2 Rust and Clang
+        run: |
+          cd "$RUNNER_TEMP/recipe"
+          python3 -u tools/x2000_toolchain.py build --jobs "$(nproc)" \
+            --rust "$RUNNER_TEMP/rust.git" --llvm "$RUNNER_TEMP/llvm-project.git"
+          python3 tools/x2000_toolchain.py check
+      - name: Package the compiler candidate
+        run: |
+          python3 tools/compiler_release.py pack --producer "$PRODUCER" --work "$Q2_X2000_WORK" --bundle compiler.tar.gz
+          sha256sum compiler.tar.gz | tee SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: q2-compiler-linux-x86_64
+          path: |
+            compiler.tar.gz
+            SHA256SUMS
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
