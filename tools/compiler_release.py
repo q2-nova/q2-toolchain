@@ -17,6 +17,11 @@ NIGHTLY = toolchain.PIN['rust_toolchain']
 MANIFEST = 'compiler-bundle.json'
 RECEIPT = 'install/x2000-toolchain.json'
 CHECKS = ['install', 'c_msa', 'rust_std']
+REQUIRED_NOTICES = (
+    'licenses/q2/LICENSE', 'licenses/q2/NOTICE.md', 'licenses/q2/q2-librespot-MIT.txt',
+    'licenses/rust/LICENSE-APACHE', 'licenses/rust/LICENSE-MIT', 'licenses/rust/COPYRIGHT',
+    'licenses/llvm-project/LICENSE.TXT', 'licenses/llvm/LICENSE.TXT', 'licenses/clang/LICENSE.TXT',
+)
 
 
 def git(*args):
@@ -70,6 +75,16 @@ def pack(bundle, work, producer):
         member.uname = member.gname = ''
         return member
 
+    llvm = work / 'src/src/llvm-project'
+    notices = dict(zip(REQUIRED_NOTICES, (
+        ROOT / 'LICENSE', ROOT / 'NOTICE.md', ROOT / 'LICENSES/q2-librespot-MIT.txt',
+        work / 'src/LICENSE-APACHE', work / 'src/LICENSE-MIT', work / 'src/COPYRIGHT',
+        llvm / 'LICENSE.TXT', llvm / 'llvm/LICENSE.TXT', llvm / 'clang/LICENSE.TXT',
+    ), strict=True))
+    for name, path in notices.items():
+        if not path.is_file() or path.stat().st_size == 0:
+            raise ValueError(f'missing notice: {name}')
+
     with tempfile.TemporaryDirectory() as directory:
         manifest = Path(directory) / MANIFEST
         manifest.write_text(json.dumps({
@@ -79,6 +94,9 @@ def pack(bundle, work, producer):
         with tarfile.open(bundle, 'x:gz') as archive:
             archive.add(manifest, arcname=MANIFEST, filter=release_metadata)
             archive.add(work / 'install', arcname='install', filter=release_metadata)
+            archive.add(work / 'src/LICENSES', arcname='licenses/rust/texts', filter=release_metadata)
+            for name, path in notices.items():
+                archive.add(path, arcname=name, filter=release_metadata)
     print(digest(bundle))
 
 
@@ -89,7 +107,7 @@ def manifest_from_archive(archive):
         if member.name in names or name.is_absolute() or '..' in name.parts or not name.parts:
             raise ValueError('archive member paths must be unique and relative')
         names.add(member.name)
-        if name.parts[0] not in (MANIFEST, 'install'):
+        if name.parts[0] not in (MANIFEST, 'install', 'licenses'):
             raise ValueError('unexpected bundle content')
         tarfile.data_filter(member, '/compiler-bundle')
         if member.uid or member.gid or member.uname or member.gname:
@@ -112,9 +130,13 @@ def inspect(bundle, producer, fixture=False):
         }:
             raise ValueError('bundle provenance mismatch')
         receipt_data = json.loads(receipt)
-        if not fixture and (receipt_data.get('host') != toolchain.HOST
-                            or receipt_data.get('pin') != toolchain.PIN):
-            raise ValueError('installation receipt provenance mismatch')
+        if not fixture:
+            if receipt_data.get('host') != toolchain.HOST or receipt_data.get('pin') != toolchain.PIN:
+                raise ValueError('installation receipt provenance mismatch')
+            for name in REQUIRED_NOTICES:
+                notice = archive.getmember(name)
+                if not notice.isfile() or notice.size == 0:
+                    raise ValueError(f'missing notice: {name}')
         return manifest
 
 
