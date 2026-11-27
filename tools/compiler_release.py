@@ -61,7 +61,16 @@ def pack(bundle, work, producer):
     # directory for absolute checkout paths before distribution.
     sensitive_paths = {str(path).encode() for path in (work, ROOT, Path.home())
                        if len(path.parts) >= 3}
+    # Rust's installer writes host-absolute paths in its uninstall records.
+    # A relocatable tar distribution is removed by deleting its directory.
+    def installer_state(relative):
+        return (relative.parent == Path('install/lib/rustlib')
+                and (relative.name.startswith('manifest-') or relative.name in {
+                    'uninstall.sh', 'install.log', 'components', 'rust-installer-version'}))
+
     for path in (work / 'install').rglob('*'):
+        if installer_state(path.relative_to(work)):
+            continue
         if path.is_symlink():
             if Path(path.readlink()).is_absolute():
                 raise ValueError(f'absolute symlink in install: {path.relative_to(work)}')
@@ -71,6 +80,8 @@ def pack(bundle, work, producer):
             if any(value + b'/' in data for value in sensitive_paths):
                 raise ValueError(f'producer path in install: {path.relative_to(work)}')
     def release_metadata(member):
+        if installer_state(Path(member.name)):
+            return None
         member.uid = member.gid = 0
         member.uname = member.gname = ''
         return member

@@ -183,6 +183,7 @@ prefix = {json.dumps(str(work / 'install'))}
 sysconfdir = "etc"
 
 [rust]
+remap-debuginfo = true
 channel = "nightly"
 lld = false
 llvm-tools = true

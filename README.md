@@ -87,35 +87,16 @@ The manually dispatched toolchain checks run the Python controls, generate the Q
 4. On a clean Linux x86-64 host matching the minimum supported runtime ABI, unpack the exact candidate archive at a different path with the original build path unavailable. Point `Q2_X2000_WORK` at the directory containing the unpacked `install`. Repeat `check`, the C/LLVM IR tests and the Rust cross-build and execution. Verify the tools resolve their host libraries and Clang finds `llvm/lib/clang` resources after relocation. Record the minimum tested host and any required system libraries alongside the archive.
 5. Record the SHA-256 of the qualified archive and retained install receipt with the promotion decision. The archive digest covers Rust sources, Clang headers and other contents beyond the binaries checked by `check`. Select that exact archive digest together with the recipe commit and compiler lock in the consumer's component manifest. Reuse it across consumer builds with those same inputs and the supported host ABI.
 
-### Stage a qualified archive in GitHub
+### Release the compiler
 
-Run the packaging and qualification commands on Linux x86-64. Qualification runs the compiler and SDK, so use an isolated, trusted host with the minimum supported Linux ABI and no access to the build checkout's original absolute paths. Keep the package and report together.
+Push a version tag such as `v0.1.0-rc.1`. GitHub Actions builds and checks the
+compiler at that tag, then attaches `compiler.tar.gz` and
+`compiler.tar.gz.sha256` to its GitHub prerelease. Downstream projects select
+the release by tag. The archive contains the compiler, Rust sources, licenses
+and build manifest. Verify its checksum and extract it before setting
+`Q2_X2000_WORK` to the extracted directory. The player can reuse this release
+until its compiler pin changes.
 
-```sh
-python3 tools/compiler_release.py pack \
-  --producer "$PRODUCER_COMMIT" --work "$Q2_X2000_WORK" --bundle compiler.tar.gz
-
-python3 tools/compiler_release.py qualify \
-  --producer "$PRODUCER_COMMIT" --bundle compiler.tar.gz --report qualification.json \
-  --sdk "$SDK" --sdk-receipt "$SDK_RELOCATION_RECEIPT" \
-  --rust-link "$OS_CHECKOUT/os/rust-link.py" \
-  --qemu-user "$QEMU_USER" --qemu-receipt "$QEMU_RELEASE_RECEIPT"
-
-sha256sum compiler.tar.gz
-```
-
-The SDK relocation receipt provides its `sdk` path and `archive_sha256` from the Buildroot SDK. The QEMU receipt provides `source_commit` and `qemu_user_sha256`. The qualifier rechecks the QEMU binary digest, unpacks the compiler under a new directory and runs the install check, the C/IR fixture and a Rust standard-library program using the SDK sysroot in QEMU. The resulting qualification record contains hashes, identities and the tested ABI.
-
-Review the actual archive and qualification record, including licenses, host paths and any redistribution restrictions. A trusted operator uploads the reviewed `compiler.tar.gz` and `qualification.json` to an intake draft release. Dispatch **Stage a compiler release** on the default branch using `stage`, the exact producer recipe commit, intake tag, unused draft tag and reviewed bundle SHA-256. The workflow checks the producer and upstream lock, archive hash and qualification record and attaches the same bytes to a new draft. Keep the intake draft unpublished. Review the new draft and its downloads before deciding to publish.
-
-Dispatch `validate` to exercise admission with a generated fixture. The validation job has read-only permissions and rejects the fixture in release mode. Both workflow modes use hosted Linux runners for validation or staging. Building and qualifying an actual compiler require a separate build host, a relocated SDK and compatible QEMU; they run using the local commands above.
-
-### Build the compiler in GitHub Actions
-
-Dispatch **Build the X2000 compiler** on `main`. The optional `producer`
-selects an exact recipe commit in its history. A hosted Linux x86-64 runner
-fetches the selected Rust and LLVM sources, builds stage-2 rustc and Clang,
-checks the installation and uploads `q2-compiler-linux-x86_64`. This Actions
-artifact contains `compiler.tar.gz` and `SHA256SUMS`. Use the run ID and
-archive hash to select the candidate for SDK/QEMU qualification. Promote the
-qualified archive once, then reuse it for player and daemon builds.
+A manual dispatch of **Build the X2000 compiler** exercises the same build
+without publishing. For SDK and QEMU qualification on a candidate archive,
+use `tools/compiler_release.py qualify --help`.
