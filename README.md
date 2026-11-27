@@ -1,10 +1,18 @@
 # Q2 toolchain
 
-This recipe builds stage-2 Rust and Clang for the Shanling Q2's Ingenic
-X2000. The LLVM Project fork includes Rust's bundled LLVM changes, plus Q2's
-MSA cost model, lowering fixes, and scheduler. The separately built
-q2-os Buildroot SDK supplies the target headers, libraries, GCC runtime, and
-linker. [Compiler design](docs/x2000-toolchain.md) · [Measured instruction costs](docs/x2000-msa.md)
+This project builds the tools that let a Linux computer compile and test
+software for the Shanling Q2 music player. It packages Rust and Clang for
+the Q2’s Ingenic X2000 processor and publishes a QEMU emulator that runs Q2
+programs and boots system images on an x86-64 Linux host.
+
+If you’re changing the player, start in the player repository. Its release
+build downloads the compiler and emulator versions it needs and links the
+app against the headers and libraries in the OS SDK. Come here to change
+a compiler recipe or build the tools yourself.
+[Player build guide](https://github.com/q2-nova/q2-player/blob/main/docs/target-build.md) · [Tool releases](https://github.com/q2-nova/q2-toolchain/releases) · [QEMU build guide](docs/qemu-ci.md)
+
+Rust and Clang use the same Q2 LLVM fork, which adds X2000 instruction costs,
+scheduling and code generation fixes. [Compiler design](docs/x2000-toolchain.md) · [Measured instruction costs](docs/x2000-msa.md)
 
 Original Q2 material is GPL-3.0-or-later. [Licenses and attribution](NOTICE.md)
 
