@@ -21,6 +21,7 @@ jobs:
       - name: Check target and verify source pairing
         run: |
           python3 -m unittest discover -s tools -p 'test_*.py'
+          python3 -m unittest discover -s tests/perf -p 'test_*.py'
           source_root=$(mktemp -d)
           python3 tools/x2000_toolchain.py spec q2/toolchain/mipsel-q2-linux-gnu.json "$source_root/target.json"
           for source in rust llvm; do
