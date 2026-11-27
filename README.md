@@ -85,6 +85,31 @@ The X2000 C wrapper carries Buildroot's stack protector, RELRO and BIND_NOW
 flags under the corresponding SDK conditions. The OS owns the userspace
 comparison and installation checks. [C wrapper](q2/toolchain/q2-x2000-cc)
 
+## Profile-guided builds
+
+The compiler carries what a profile-guided Q2 build needs from the LLVM
+inside rustc: `install/llvm/bin/llvm-profdata` and compiler-rt's profile
+runtime for the Q2 at
+`install/llvm/lib/mipsel-q2-os-linux-gnu/libclang_rt.profile.a`. The X2000
+C wrapper builds the runtime from the pinned LLVM Project commit against
+the SDK sysroot. The SDK release is pinned in
+[the runtime lock](q2/toolchain/profile-runtime.json). The receipt
+`install/x2000-toolchain.json` records the archive's SHA-256, the source
+commit and each source file's SHA-256 under `profile_runtime`. The fork
+leaves `compiler-rt/lib/profile` unchanged from Rust's LLVM base.
+
+```sh
+python3 tools/x2000_toolchain.py profile-runtime --sdk /path/to/sdk \
+  --sdk-archive-sha256 SHA256 --llvm ../llvm-project
+```
+
+Consumers' `tools/pgo.py` use the shared driver
+[`tools/q2_pgo.py`](tools/q2_pgo.py). It provides the instrumented-build
+rustflags, training runs under `qemu-mipsel` or `qemu-system-mipsel` with
+`LLVM_PROFILE_FILE`, a weighted `llvm-profdata merge`, a coverage report
+(functions and regions with counts per crate and module, plus named hot
+paths) and the profile receipt that builds check before `-Cprofile-use`.
+
 ## Compiler qualification and promotion
 
 The manually dispatched toolchain checks run the Python controls, generate the Q2 target specification and verify the pinned Rust and LLVM commits and their pairing. CI fetches shallow Git metadata from the published forks and uses the checked-in pins. Compiler builds are a separate release input. The player build consumes a selected compiler and SDK only after qualification.

@@ -48,7 +48,8 @@ def verify_producer(commit):
         raise ValueError('producer must identify a Git commit')
     if json.loads(git('show', f'{commit}:q2/toolchain/llvm/pin.json')) != toolchain.PIN:
         raise ValueError('producer source pins differ from the current lock')
-    for name in ('tools/x2000_toolchain.py', 'q2/toolchain/mipsel-q2-linux-gnu.json'):
+    for name in ('tools/x2000_toolchain.py', 'tools/q2_pgo.py', 'q2/toolchain/mipsel-q2-linux-gnu.json',
+                 'q2/toolchain/profile-runtime.json'):
         if git('show', f'{commit}:{name}') != (ROOT / name).read_text().rstrip():
             raise ValueError(f'producer input differs from the current checkout: {name}')
 

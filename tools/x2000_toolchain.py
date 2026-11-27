@@ -265,6 +265,49 @@ def write_receipt(work):
         output.write(json.dumps(receipt, indent=1) + '\n')
 
 
+def profile_runtime(a):
+    """Build compiler-rt's profile runtime for the Q2 into the installed compiler.
+
+    The sources are the pinned LLVM Project commit's, from the prepared source
+    tree or from `--llvm`. The X2000 C wrapper compiles them against the SDK
+    sysroot; the SDK's GCC has no C++ compiler for InstrProfilingRuntime.cpp.
+    The archive, its record and the receipt's file list change.
+    """
+    sys.path.insert(0, str(HERE))
+    import q2_pgo
+    work = work_dir()
+    install = installed()
+    sdk = a.sdk.resolve()
+    ar = sdk / 'bin/mipsel-buildroot-linux-gnu-ar'
+    cc = [ROOT / 'q2/toolchain/q2-x2000-cc']
+    compiler = {'kind': 'x2000-clang', 'wrapper_sha256': sha256(cc[0]),
+                'clang_sha256': sha256(install / 'llvm/bin/clang')}
+    env = dict(os.environ, Q2_X2000_CLANG=str(install / 'llvm/bin/clang'), Q2_SDK=str(sdk),
+               Q2_X2000_CC_ARCH=cc_arch())
+    with tempfile.TemporaryDirectory(prefix='profile-runtime-src-') as temp:
+        if a.llvm:
+            source = q2_pgo.export_runtime_sources(a.llvm, PIN['llvm_commit'], Path(temp))
+        else:
+            source = work / 'src/src/llvm-project'
+            if not (source / 'compiler-rt/lib/profile').is_dir():
+                raise SystemExit(f'{source}: no prepared LLVM source; pass --llvm with the pinned repository')
+        record = q2_pgo.build_runtime(source, install / q2_pgo.RUNTIME, cc, ar, env=env,
+                                      llvm_commit=PIN['llvm_commit'], compiler_name=compiler)
+    record.update(llvm_base=PIN['llvm_base'], sdk={'archive_sha256': a.sdk_archive_sha256, 'ar_sha256': sha256(ar)})
+    record_path = install / q2_pgo.RUNTIME_RECORD
+    record_path.write_text(json.dumps(record, indent=1, sort_keys=True) + '\n')
+    path = receipt_path(work)
+    receipt = json.loads(path.read_text())
+    receipt['profile_runtime'] = record
+    for item in (install / q2_pgo.RUNTIME, record_path):
+        receipt['files'][str(item.relative_to(install))] = sha256(item)
+    receipt['files'] = dict(sorted(receipt['files'].items()))
+    part = path.with_name(path.name + '.part')
+    part.write_text(json.dumps(receipt, indent=1) + '\n')
+    part.replace(path)
+    return record
+
+
 def installed(required=True):
     """The install directory, checked against the pinned source revisions."""
     work = work_dir()
@@ -347,6 +390,10 @@ def main():
     sources.add_argument('--rust', type=Path, required=True)
     sources.add_argument('--llvm', type=Path, required=True)
     b.add_argument('--jobs', type=int, default=2)
+    runtime = sub.add_parser('profile-runtime', help='add the compiler-rt profile runtime to the installed compiler')
+    runtime.add_argument('--sdk', type=Path, required=True, help='relocated q2-os SDK')
+    runtime.add_argument('--sdk-archive-sha256', required=True, help='SHA-256 of the SDK release archive')
+    runtime.add_argument('--llvm', type=Path, help='pinned LLVM Project Git repository (default: the prepared source)')
     sub.add_parser('show')
     sub.add_parser('check')
     sub.add_parser('shell-env')
@@ -361,6 +408,8 @@ def main():
     elif a.cmd == 'check-sources':
         source_checkouts(a.rust, a.llvm)
         print(json.dumps(source_identity(), indent=2))
+    elif a.cmd == 'profile-runtime':
+        print(json.dumps(profile_runtime(a), indent=1))
     elif a.cmd == 'show':
         installed()
         print(receipt_path(work_dir()).read_text(), end='')

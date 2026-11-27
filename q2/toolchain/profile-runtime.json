@@ -1,0 +1,8 @@
+{
+  "sdk": {
+    "repository": "q2-nova/q2-os",
+    "tag": "v0.1.0-rc.2",
+    "archive": "mipsel-buildroot-linux-gnu_sdk-buildroot.tar.gz",
+    "sha256": "7817826dd504707b1e84707c409b472ca985eed71a7ac1e3b84d1f2cc1bd7ba9"
+  }
+}

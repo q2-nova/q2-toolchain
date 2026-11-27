@@ -45,6 +45,21 @@ jobs:
           python3 -u tools/x2000_toolchain.py build --jobs "$(nproc)" \
             --rust "$RUNNER_TEMP/rust.git" --llvm "$RUNNER_TEMP/llvm-project.git"
           python3 tools/x2000_toolchain.py check
+      - name: Build the Q2 profile runtime
+        env:
+          GH_TOKEN: ${{ secrets.Q2_COMPONENTS_READ_TOKEN || github.token }}
+        run: |
+          lock=q2/toolchain/profile-runtime.json
+          archive=$(jq -er .sdk.archive "$lock")
+          gh release download "$(jq -er .sdk.tag "$lock")" -R "$(jq -er .sdk.repository "$lock")" \
+            -p "$archive" -D "$RUNNER_TEMP/sdk-release"
+          sha=$(jq -er .sdk.sha256 "$lock")
+          echo "$sha  $RUNNER_TEMP/sdk-release/$archive" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/sdk-release/$archive" -C "$RUNNER_TEMP"
+          sdk="$RUNNER_TEMP/${archive%.tar.gz}"
+          "$sdk/relocate-sdk.sh"
+          python3 tools/x2000_toolchain.py profile-runtime --sdk "$sdk" --sdk-archive-sha256 "$sha"
+          python3 tools/x2000_toolchain.py check
       - name: Package the compiler candidate
         run: |
           python3 tools/compiler_release.py pack --producer "$(git rev-parse HEAD)" --work "$Q2_X2000_WORK" --bundle compiler.tar.gz
