@@ -1,20 +1,17 @@
 # Q2 toolchain
 
-This project builds the tools that let a Linux computer compile and test
-software for the Shanling Q2 music player. It packages Rust and Clang for
-the Q2’s Ingenic X2000 processor and publishes a QEMU emulator that runs Q2
-programs and boots system images on an x86-64 Linux host.
+This repository builds the tools that compile and test software for the
+Shanling Q2 music player on an x86-64 Linux computer: Rust and Clang
+cross-compilers for the Q2's Ingenic X2000 processor, and a QEMU emulator
+that runs Q2 programs and boots Q2 system images.
 
-If you’re changing the player, start in the player repository. Its release
-build downloads the compiler and emulator versions it needs and links the
-app against the headers and libraries in the OS SDK. Come here to change
-a compiler recipe or build the tools yourself.
-[Player build guide](https://github.com/q2-nova/q2-player/blob/main/docs/target-build.md) · [Tool releases](https://github.com/q2-nova/q2-toolchain/releases) · [QEMU build guide](docs/qemu-ci.md)
+It is for contributors who change a compiler recipe, the X2000 code
+generation or the emulator build. To change the player, you don't need to
+build these tools: the player's build downloads the tagged compiler and
+emulator releases it needs. [Player build guide](https://github.com/q2-nova/q2-player/blob/main/docs/target-build.md)
 
-Rust and Clang use the same Q2 LLVM fork, which adds X2000 instruction costs,
-scheduling and code generation fixes. [Compiler design](docs/x2000-toolchain.md) · [Measured instruction costs](docs/x2000-msa.md)
-
-Original Q2 material is GPL-3.0-or-later. [Licenses and attribution](NOTICE.md)
+Rust and Clang use the same Q2 LLVM fork, which adds X2000 instruction
+costs, scheduling and code generation fixes. [Compiler design](docs/x2000-toolchain.md) · [Measured instruction costs](docs/x2000-msa.md)
 
 ## Build on x86-64 Linux
 
@@ -110,26 +107,35 @@ rustflags, training runs under `qemu-mipsel` or `qemu-system-mipsel` with
 (functions and regions with counts per crate and module, plus named hot
 paths) and the profile receipt that builds check before `-Cprofile-use`.
 
-## Compiler qualification and promotion
+## Releases
 
-The manually dispatched toolchain checks run the Python controls, generate the Q2 target specification and verify the pinned Rust and LLVM commits and their pairing. CI fetches shallow Git metadata from the published forks and uses the checked-in pins. Compiler builds are a separate release input. The player build consumes a selected compiler and SDK only after qualification.
+Compiler and emulator releases are GitHub prereleases for developers.
+[Tool releases](https://github.com/q2-nova/q2-toolchain/releases)
 
-1. Build from the reviewed toolchain commit with the pinned Rust and LLVM sources and a new work directory. Run `python3 tools/x2000_toolchain.py check` on the completed installation. Record the toolchain recipe commit, source lock, host architecture and Linux ABI, host compiler and bootstrap configuration.
-2. With the selected relocated q2-os SDK and pinned QEMU MIPS user emulator, run the C and LLVM IR checks above. Use the installed rustc with the pinned Cargo, Q2 target JSON, q2-os linker shim and `-Zbuild-std=std,panic_abort` to build a Rust program using the standard library. Confirm it runs with QEMU's P5600 CPU and the SDK sysroot. Record the SDK and emulator identities, commands and results.
-3. Package the complete `install` directory intact. It contains rustc, its host libraries and Rust source, Clang, its resource headers, the LLVM tools and `x2000-toolchain.json`. Keep upstream Rust and LLVM notices and the applicable third-party notices with any distributed compiler. The package command includes the Q2, Rust, LLVM and Clang notices in `licenses/`.
-4. On a clean Linux x86-64 host matching the minimum supported runtime ABI, unpack the exact candidate archive at a different path with the original build path unavailable. Point `Q2_X2000_WORK` at the directory containing the unpacked `install`. Repeat `check`, the C/LLVM IR tests and the Rust cross-build and execution. Verify the tools resolve their host libraries and Clang finds `llvm/lib/clang` resources after relocation. Record the minimum tested host and any required system libraries alongside the archive.
-5. Record the SHA-256 of the qualified archive and retained install receipt with the promotion decision. The archive digest covers Rust sources, Clang headers and other contents beyond the binaries checked by `check`. Select that exact archive digest together with the recipe commit and compiler lock in the consumer's component manifest. Reuse it across consumer builds with those same inputs and the supported host ABI.
+- [Release and qualify the compiler](docs/compiler-release.md): the tag
+  workflow, the manual checks and the qualification steps a compiler archive
+  passes before the player selects it.
+- [QEMU prerelease assets](docs/qemu-ci.md): the emulator build, its checks
+  and its runtime requirements.
 
-### Release the compiler
+## Contributing
 
-Push a version tag such as `v0.1.0-rc.1`. GitHub Actions builds and checks the
-compiler at that tag, then attaches `compiler.tar.gz` and
-`compiler.tar.gz.sha256` to its GitHub prerelease. Downstream projects select
-the release by tag. The archive contains the compiler, Rust sources, licenses
-and build manifest. Verify its checksum and extract it before setting
-`Q2_X2000_WORK` to the extracted directory. The player can reuse this release
-until its compiler pin changes.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for the local checks and what runs
+in CI. Report security problems privately as described in
+[SECURITY.md](SECURITY.md). Participation follows the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
-A manual dispatch of **Build the X2000 compiler** exercises the same build
-without publishing. For SDK and QEMU qualification on a candidate archive,
-use `tools/compiler_release.py qualify --help`.
+## Related repositories
+
+- [q2-player](https://github.com/q2-nova/q2-player): the player app and the installable update. Start there to install Q2 Nova.
+- [q2-os](https://github.com/q2-nova/q2-os): the Linux system, recovery environment and SDK.
+- [tsrs](https://github.com/q2-nova/tsrs): the Tailscale network daemon.
+- Forks this repository builds from: [rust](https://github.com/q2-nova/rust) (branch `q2/nightly-2026-11-12`), [llvm-project](https://github.com/q2-nova/llvm-project) (branch `q2/23.1`) and [qemu](https://github.com/q2-nova/qemu) (branch `q2/10.1`).
+
+## License
+
+Original Q2 material is licensed under the GNU General Public License,
+version 3 or any later version (`GPL-3.0-or-later`). See [LICENSE](LICENSE).
+The firmware-sysroot helpers retain MIT-licensed code from q2-librespot
+([LICENSES/q2-librespot-MIT.txt](LICENSES/q2-librespot-MIT.txt)). Rust, the
+LLVM Project and QEMU keep their upstream licenses. [Licenses and attribution](NOTICE.md)

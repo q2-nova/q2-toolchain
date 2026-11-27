@@ -5,8 +5,8 @@ See [the measured inputs](x2000-msa.md) and [build instructions](../README.md).
 
 ## Why the stock compiler's MSA code was slow
 
-The 2026-11-17 MSA-everywhere build (`-C target-feature=+msa`, stock nightly)
-decoded images 16–45% slower in the original Q2 player comparison.
+A player built with MSA everywhere (`-C target-feature=+msa`, stock nightly)
+decoded images 16–45% slower in the Q2 player comparison.
 Three causes, found with `tests/perf/x2000_cost/lowering.py` on the stock
 `llc`:
 
