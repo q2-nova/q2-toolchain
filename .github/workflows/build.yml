@@ -4,46 +4,89 @@ on:
     tags: ['v[0-9]*-rc.[0-9]*']
   workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
+# Each job hands the next one an archive with a manifest that the next job
+# checks against its own checkout (docs/compiler-release.md). A failed job
+# can be re-run alone: the handoffs of the jobs before it stay with the run.
 jobs:
-  build:
+  llvm:
+    name: Build LLVM and Clang
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - name: Prepare runner disk and build tools
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
-          echo "Q2_X2000_WORK=$RUNNER_TEMP/x2000" >> "$GITHUB_ENV"
-          df -h "$RUNNER_TEMP"
-          cmake --version
-          ninja --version
-          g++ --version
-      - name: Select exact recipe and source commits
-        run: |
-          lock=q2/toolchain/llvm/pin.json
-          for source in rust llvm-project; do
-            if [[ "$source" == rust ]]; then
-              sha=$(jq -er .rust_commit "$lock")
-              options=(--filter=blob:none --depth=1)
-            else
-              sha=$(jq -er .llvm_commit "$lock")
-              options=(--depth=3)
-            fi
-            repo="$RUNNER_TEMP/$source.git"
-            git init --quiet --bare "$repo"
-            git -C "$repo" fetch --quiet "${options[@]}" "https://github.com/q2-nova/$source.git" "$sha"
-            git -C "$repo" update-ref HEAD FETCH_HEAD
-          done
-          python3 tools/x2000_toolchain.py check-sources --rust "$RUNNER_TEMP/rust.git" --llvm "$RUNNER_TEMP/llvm-project.git"
-      - name: Bootstrap stage-2 Rust and Clang
+      - uses: ./.github/actions/x2000-sources
+      - name: Build LLVM and Clang
         run: |
           export CFLAGS="-ffile-prefix-map=$Q2_X2000_WORK=/q2-build"
           export CXXFLAGS="$CFLAGS"
-          python3 -u tools/x2000_toolchain.py build --jobs "$(nproc)" \
-            --rust "$RUNNER_TEMP/rust.git" --llvm "$RUNNER_TEMP/llvm-project.git"
+          python3 -u tools/x2000_toolchain.py build-llvm --jobs "$(nproc)" \
+            --rust "$RUNNER_TEMP/rust.git" --llvm "$RUNNER_TEMP/llvm-project.git" \
+            --handoff "$RUNNER_TEMP/handoff"
+          jq -r '"\(.stage) handoff: \(.archive_bytes) bytes, SHA-256 \(.archive_sha256)"' \
+            "$RUNNER_TEMP/handoff/llvm.json" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: llvm-handoff
+          path: ${{ runner.temp }}/handoff
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+          overwrite: true
+
+  rust:
+    name: Build stage-2 Rust
+    needs: llvm
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/x2000-sources
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: llvm-handoff
+          path: ${{ runner.temp }}/llvm-handoff
+      - name: Build stage-2 Rust on the handed-off LLVM
+        run: |
+          export CFLAGS="-ffile-prefix-map=$Q2_X2000_WORK=/q2-build"
+          export CXXFLAGS="$CFLAGS"
+          python3 -u tools/x2000_toolchain.py build-rust --jobs "$(nproc)" \
+            --rust "$RUNNER_TEMP/rust.git" --llvm "$RUNNER_TEMP/llvm-project.git" \
+            --from "$RUNNER_TEMP/llvm-handoff" --handoff "$RUNNER_TEMP/handoff"
+          python3 tools/x2000_toolchain.py check
+          jq -r '"\(.stage) handoff: \(.archive_bytes) bytes, SHA-256 \(.archive_sha256)"' \
+            "$RUNNER_TEMP/handoff/install.json" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: install-handoff
+          path: ${{ runner.temp }}/handoff
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+          overwrite: true
+
+  package:
+    name: Add the Q2 profile runtime and package the compiler
+    needs: rust
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/x2000-sources
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: install-handoff
+          path: ${{ runner.temp }}/install-handoff
+      - name: Restore the installed compiler and its sources
+        run: |
+          python3 tools/x2000_toolchain.py prepare --rust "$RUNNER_TEMP/rust.git" --llvm "$RUNNER_TEMP/llvm-project.git"
+          python3 tools/x2000_toolchain.py restore install --from "$RUNNER_TEMP/install-handoff"
           python3 tools/x2000_toolchain.py check
       - name: Build the Q2 profile runtime
         env:
@@ -64,10 +107,34 @@ jobs:
         run: |
           python3 tools/compiler_release.py pack --producer "$(git rev-parse HEAD)" --work "$Q2_X2000_WORK" --bundle compiler.tar.gz
           sha256sum compiler.tar.gz | tee compiler.tar.gz.sha256 >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: compiler
+          path: |
+            compiler.tar.gz
+            compiler.tar.gz.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+          overwrite: true
+
+  publish:
+    name: Publish the tagged compiler
+    needs: package
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: compiler
       - name: Publish the tagged compiler
-        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" compiler.tar.gz compiler.tar.gz.sha256 \
+          sha256sum --check --strict compiler.tar.gz.sha256
+          [[ $(tar -xzOf compiler.tar.gz compiler-bundle.json | jq -er .producer_commit) == "$GITHUB_SHA" ]]
+          gh release create "$GITHUB_REF_NAME" compiler.tar.gz compiler.tar.gz.sha256 -R "$GITHUB_REPOSITORY" \
             --verify-tag --prerelease --title "$GITHUB_REF_NAME" --notes "Q2 compiler for Linux x86-64."

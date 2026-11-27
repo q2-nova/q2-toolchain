@@ -18,6 +18,51 @@ A manual dispatch of **Build the X2000 compiler** runs the same build
 without publishing. For SDK and QEMU qualification of a candidate archive,
 use `tools/compiler_release.py qualify --help`.
 
+## Build stages
+
+The workflow runs four jobs, each after the one before it. Each building
+job fetches the pinned Rust and LLVM commits, checks them against
+`q2/toolchain/llvm/pin.json` and assembles the source tree from them, then
+continues from the previous job's handoff.
+
+| Job | Builds | Hands off |
+| --- | --- | --- |
+| **Build LLVM and Clang** | `x.py build src/llvm-project/llvm` | `llvm-handoff`: LLVM's output directory `build/x86_64-unknown-linux-gnu/llvm`. Of its CMake build tree it keeps the Clang and LLVM tool binaries, Clang's resource headers and the MIPS code generation library, which the Rust job reads. About 510 MiB. |
+| **Build stage-2 Rust** | `x.py install` on the handed-off LLVM, then adds Clang and the LLVM tools to `install` and writes its receipt | `install-handoff`: the `install` directory. About 180 MiB. |
+| **Add the Q2 profile runtime and package the compiler** | the profile runtime, `compiler.tar.gz` and `compiler.tar.gz.sha256` | `compiler`: the two files |
+| **Publish the tagged compiler** | on tag pushes only, the prerelease from the `compiler` files | |
+
+A handoff is a `.tar.zst` archive and a JSON manifest. The manifest holds
+the producing commit, the source lock, the work directory, the SHA-256 of
+the bootstrap configuration without its job counts, the archive's SHA-256,
+and the mode and SHA-256 of every file. The LLVM manifest also holds
+`CFLAGS` and `CXXFLAGS`, which the Rust build must repeat. The next job
+refuses a handoff whose manifest differs from its own checkout in
+any of these, whose archive has another digest, or whose unpacked files
+differ from the list. The Rust job also fails if bootstrap changed the
+handed-off LLVM, so the packaged Clang and LLVM tools are the LLVM job's.
+The publish job checks the archive against its checksum file and that the
+bundle names the tagged commit as its producer.
+
+The same steps run locally: `build-llvm --handoff DIR`, then
+`build-rust --from DIR --handoff DIR2`, then `prepare` and
+`restore install --from DIR2`. Each step needs an empty work directory at
+the same `Q2_X2000_WORK` path, because the manifest records that path.
+`build` runs the whole recipe in one work directory.
+
+## Retry a failed stage
+
+Choose **Re-run failed jobs** on the run, or run
+`gh run rerun RUN_ID --failed`. Jobs that passed are not repeated: the
+re-run jobs download the handoffs that the earlier jobs of that run
+uploaded. To repeat a job that passed, re-run it alone with
+`gh run rerun RUN_ID --job JOB_ID`, with the job ID from
+`gh run view RUN_ID --json jobs`. GitHub also re-runs the jobs after it.
+
+A re-run builds the run's original commit, so a change to the recipe needs
+a new run. Handoffs are kept for 30 days, the period in which GitHub allows
+a re-run. The publish job fails if the tag's prerelease already exists.
+
 ## Checks on every compiler change
 
 The **Toolchain controls** workflow runs on manual dispatch. It runs the

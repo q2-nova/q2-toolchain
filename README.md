@@ -47,7 +47,8 @@ generated `x2000-toolchain.json` beside the binaries. Set `Q2_X2000_WORK` to
 an unused directory for a new attempt. To exercise assembly without
 compiling, use `prepare` with the same checkout arguments and a separate
 `Q2_X2000_WORK`. Both subcommands take `--rust-source` for an already
-downloaded copy of the locked distribution archive.
+downloaded copy of the locked distribution archive. The release workflow
+runs the same recipe in stages. [Build stages](docs/compiler-release.md#build-stages)
 
 ## Exercise the compiler and SDK
 

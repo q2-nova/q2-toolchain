@@ -1,0 +1,35 @@
+name: Prepare the runner and select the pinned sources
+description: >
+  Frees runner disk, sets Q2_X2000_WORK and fetches the Rust and LLVM Project
+  commits of q2/toolchain/llvm/pin.json into bare repositories in RUNNER_TEMP.
+runs:
+  using: composite
+  steps:
+    - name: Prepare runner disk and build tools
+      shell: bash
+      run: |
+        sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+        echo "Q2_X2000_WORK=$RUNNER_TEMP/x2000" >> "$GITHUB_ENV"
+        df -h "$RUNNER_TEMP"
+        cmake --version
+        ninja --version
+        g++ --version
+        zstd --version
+    - name: Select exact recipe and source commits
+      shell: bash
+      run: |
+        lock=q2/toolchain/llvm/pin.json
+        for source in rust llvm-project; do
+          if [[ "$source" == rust ]]; then
+            sha=$(jq -er .rust_commit "$lock")
+            options=(--filter=blob:none --depth=1)
+          else
+            sha=$(jq -er .llvm_commit "$lock")
+            options=(--depth=3)
+          fi
+          repo="$RUNNER_TEMP/$source.git"
+          git init --quiet --bare "$repo"
+          git -C "$repo" fetch --quiet "${options[@]}" "https://github.com/q2-nova/$source.git" "$sha"
+          git -C "$repo" update-ref HEAD FETCH_HEAD
+        done
+        python3 tools/x2000_toolchain.py check-sources --rust "$RUNNER_TEMP/rust.git" --llvm "$RUNNER_TEMP/llvm-project.git"

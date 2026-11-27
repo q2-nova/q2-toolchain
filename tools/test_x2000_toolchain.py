@@ -2,6 +2,7 @@
 """Host controls for the target specification and compiler input admission."""
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -81,6 +82,67 @@ class Sources(unittest.TestCase):
             receipt.write_text(json.dumps({'source_sha256': x2000_toolchain.PIN['source_sha256']}))
             with self.assertRaisesRegex(SystemExit, 'llvm_commit'):
                 x2000_toolchain.installed()
+
+
+@unittest.skipUnless(shutil.which('zstd'), 'zstd is not installed')
+class Handoff(unittest.TestCase):
+    """A job's handoff to the next one in the build workflow."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.work, self.out = Path(temp.name) / 'work', Path(temp.name) / 'handoff'
+        install = self.work / 'install'
+        (install / 'bin').mkdir(parents=True)
+        (install / 'bin/rustc').write_text('#!/bin/sh\n')
+        (install / 'bin/rustc').chmod(0o755)
+        (install / 'bin/rust').symlink_to('rustc')
+        (install / 'lib').mkdir()
+        environ = mock.patch.dict(os.environ, {'CFLAGS': '-O2', 'CXXFLAGS': '-O2'})
+        environ.start()
+        self.addCleanup(environ.stop)
+        x2000_toolchain.write_handoff('install', self.work, self.out)
+        self.entries = x2000_toolchain.tree_entries(install)
+        shutil.rmtree(install)
+
+    def test_restores_files_modes_and_links(self):
+        x2000_toolchain.restore_handoff('install', self.work, self.out)
+        self.assertEqual(x2000_toolchain.tree_entries(self.work / 'install'), self.entries)
+        self.assertEqual(self.entries['bin/rustc']['mode'], '755')
+        self.assertEqual(self.entries['bin/rust'], {'symlink': 'rustc'})
+
+    def test_rejects_a_changed_archive(self):
+        with (self.out / 'install.tar.zst').open('ab') as archive:
+            archive.write(b'\0')
+        with self.assertRaisesRegex(SystemExit, 'SHA-256 differs'):
+            x2000_toolchain.restore_handoff('install', self.work, self.out)
+        self.assertFalse((self.work / 'install').exists())
+
+    def test_rejects_other_pins_flags_or_stage(self):
+        with mock.patch.dict(x2000_toolchain.PIN, llvm_commit='0' * 40):
+            with self.assertRaisesRegex(SystemExit, 'differs from this checkout in pin$'):
+                x2000_toolchain.restore_handoff('install', self.work, self.out)
+        # The install handoff does not depend on the flags; LLVM's does.
+        with mock.patch.dict(os.environ, {'CFLAGS': '-O3'}):
+            x2000_toolchain.restore_handoff('install', self.work, self.out)
+        llvm = self.work / x2000_toolchain.STAGES['llvm']
+        (llvm / 'bin').mkdir(parents=True)
+        (llvm / 'bin/llvm-config').write_text('llvm')
+        x2000_toolchain.write_handoff('llvm', self.work, self.out)
+        shutil.rmtree(llvm)
+        with mock.patch.dict(os.environ, {'CFLAGS': '-O3'}):
+            with self.assertRaisesRegex(SystemExit, 'in flags$'):
+                x2000_toolchain.restore_handoff('llvm', self.work, self.out)
+        (self.out / 'llvm.json').write_text((self.out / 'install.json').read_text())
+        with self.assertRaisesRegex(SystemExit, 'in stage, flags, archive$'):
+            x2000_toolchain.restore_handoff('llvm', self.work, self.out)
+
+    def test_rejects_unpacked_files_that_differ_from_the_list(self):
+        manifest = json.loads((self.out / 'install.json').read_text())
+        del manifest['entries']['bin/rust']
+        (self.out / 'install.json').write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(SystemExit, 'unpacked files differ'):
+            x2000_toolchain.restore_handoff('install', self.work, self.out)
 
 
 if __name__ == '__main__':

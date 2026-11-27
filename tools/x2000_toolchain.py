@@ -13,6 +13,7 @@ import json
 import os
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -194,7 +195,8 @@ def receipt_path(work):
     return work / 'install/x2000-toolchain.json'
 
 
-def build(a):
+def begin(a):
+    """Check a new work directory, prepare the sources and write the bootstrap configuration."""
     work = work_dir()
     if sys.platform != 'linux' or os.uname().machine != 'x86_64':
         raise SystemExit(f'The current bootstrap recipe targets {HOST}')
@@ -210,11 +212,14 @@ def build(a):
     config = work / 'bootstrap.toml'
     with config.open('x') as output:
         output.write(bootstrap_toml(work, a.jobs))
-    llvm_build = work / 'build' / HOST / 'llvm'
+    return work, src, config
+
+
+def bootstrap(work, src, config, *command):
     log = work / 'build-01.log'
     print('log:', log, flush=True)
     with open(log, 'x') as f:
-        p = subprocess.Popen([sys.executable, str(src / 'x.py'), 'install', '--config', str(config)],
+        p = subprocess.Popen([sys.executable, str(src / 'x.py'), *command, '--config', str(config)],
                              cwd=src, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors='replace')
         for line in p.stdout:
             f.write(line)
@@ -223,7 +228,12 @@ def build(a):
                 sys.stdout.write(line)
                 sys.stdout.flush()
         if p.wait():
-            raise SystemExit(f'x.py install failed; see {log}')
+            raise SystemExit(f'x.py {" ".join(command)} failed; see {log}')
+
+
+def finish(work, src):
+    """Add Clang, its resource headers and the LLVM tools to the install and write the receipt."""
+    llvm_build = work / STAGES['llvm']
     install = work / 'install'
     tools = install / 'llvm/bin'
     tools.mkdir(parents=True, exist_ok=True)
@@ -244,6 +254,130 @@ def build(a):
         raise SystemExit('LLVM was not rebuilt after the MIPS sources changed')
     write_receipt(work)
     print(json.dumps(json.loads(receipt_path(work).read_text()), indent=1))
+
+
+def build(a):
+    work, src, config = begin(a)
+    bootstrap(work, src, config, 'install')
+    finish(work, src)
+
+
+# The directories the workflow's jobs hand on (docs/compiler-release.md):
+# LLVM's output to the Rust job, the installed compiler to the package job.
+STAGES = {'llvm': Path('build') / HOST / 'llvm', 'install': Path('install')}
+# Rust compiles its LLVM wrapper with the flags LLVM was built with.
+HANDOFF_FLAGS = ('CFLAGS', 'CXXFLAGS')
+ZSTD = 'zstd -T0 -9 --long=30'
+
+
+def handoff_identity(stage, work):
+    """What a handoff's consumer must share with its producer."""
+    identity = {
+        'schema': 1, 'stage': stage, 'producer_commit': git_output(ROOT, 'rev-parse', 'HEAD'), 'pin': PIN,
+        'host': HOST, 'work': str(work),
+        # The bootstrap configuration apart from its job counts.
+        'recipe_sha256': hashlib.sha256(bootstrap_toml(work, 0).encode()).hexdigest(),
+    }
+    if stage == 'llvm':
+        identity['flags'] = {name: os.environ.get(name, '') for name in HANDOFF_FLAGS}
+    return identity
+
+
+def tree_entries(root):
+    """Every path below root: a file's mode and SHA-256, a symlink's target or a directory."""
+    entries = {}
+    for top, dirs, files in os.walk(root):
+        for name in dirs + files:
+            path = Path(top) / name
+            info = path.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                entry = {'symlink': os.readlink(path)}
+            elif stat.S_ISDIR(info.st_mode):
+                entry = {'directory': True}
+            elif stat.S_ISREG(info.st_mode):
+                entry = {'mode': f'{info.st_mode & 0o777:o}', 'sha256': sha256(path)}
+            else:
+                raise SystemExit(f'{path}: not a file, directory or symlink')
+            entries[path.relative_to(root).as_posix()] = entry
+    return dict(sorted(entries.items()))
+
+
+def prune_llvm_build(work):
+    """Remove LLVM's CMake build tree except the files `finish` reads from it."""
+    build = (work / STAGES['llvm'] / 'build').resolve()
+    resource = build / 'lib/clang'
+    keep = {build / 'lib/libLLVMMipsCodeGen.a'}
+    for name in LLVM_TOOLS:
+        keep |= {build / 'bin' / name, Path(os.path.realpath(build / 'bin' / name))}
+    missing = [str(path) for path in keep if not path.is_file()]
+    if missing or not resource.is_dir():
+        raise SystemExit(f'LLVM build tree lacks {", ".join(missing) or resource}')
+    for top, dirs, files in os.walk(build, topdown=False):
+        top = Path(top)
+        if top == resource or resource in top.parents:
+            continue
+        for name in files + [name for name in dirs if (top / name).is_symlink()]:
+            if top / name not in keep:
+                (top / name).unlink()
+        if top != build and not any(top.iterdir()):
+            top.rmdir()
+
+
+def write_handoff(stage, work, out):
+    root = work / STAGES[stage]
+    out.mkdir(parents=True, exist_ok=True)
+    archive = out / f'{stage}.tar.zst'
+    run(['tar', '--create', '--file', archive, '--directory', root, '--sort=name',
+         '--use-compress-program', ZSTD, '.'])
+    manifest = {**handoff_identity(stage, work), 'archive': archive.name,
+                'archive_bytes': archive.stat().st_size, 'archive_sha256': sha256(archive),
+                'entries': tree_entries(root)}
+    with (out / f'{stage}.json').open('x') as output:
+        output.write(json.dumps(manifest, indent=1) + '\n')
+    print(f'{stage} handoff: {archive.stat().st_size >> 20} MiB, {len(manifest["entries"])} paths, '
+          f'SHA-256 {manifest["archive_sha256"]}', flush=True)
+
+
+def restore_handoff(stage, work, source):
+    """Unpack a handoff after checking it against this checkout, its archive digest and its file list."""
+    path = source / f'{stage}.json'
+    manifest = json.loads(path.read_text())
+    expected = {**handoff_identity(stage, work), 'archive': f'{stage}.tar.zst'}
+    differ = [key for key, value in expected.items() if manifest.get(key) != value]
+    if differ:
+        raise SystemExit(f'{path}: the {stage} handoff differs from this checkout in {", ".join(differ)}')
+    archive = source / manifest['archive']
+    if sha256(archive) != manifest['archive_sha256']:
+        raise SystemExit(f'{archive}: SHA-256 differs from {path.name}')
+    root = work / STAGES[stage]
+    if root.exists():
+        raise SystemExit(f'{root}: already exists; restore into an unused Q2_X2000_WORK')
+    root.mkdir(parents=True)
+    run(['tar', '--extract', '--file', archive, '--directory', root, '--use-compress-program', ZSTD])
+    if tree_entries(root) != manifest['entries']:
+        raise SystemExit(f'{root}: unpacked files differ from {path.name}')
+    print(f'{stage} handoff verified: SHA-256 {manifest["archive_sha256"]}', flush=True)
+    return manifest
+
+
+def build_llvm(a):
+    """Build LLVM and Clang only and hand off LLVM's output directory."""
+    work, src, config = begin(a)
+    bootstrap(work, src, config, 'build', 'src/llvm-project/llvm')
+    prune_llvm_build(work)
+    write_handoff('llvm', work, a.handoff)
+
+
+def build_rust(a):
+    """Build and install stage-2 Rust on a handed-off LLVM and hand off the install."""
+    work, src, config = begin(a)
+    llvm = restore_handoff('llvm', work, getattr(a, 'from'))
+    bootstrap(work, src, config, 'install')
+    # Bootstrap would rebuild LLVM in place if it did not accept the handoff.
+    if tree_entries(work / STAGES['llvm']) != llvm['entries']:
+        raise SystemExit('Rust bootstrap changed the handed-off LLVM')
+    finish(work, src)
+    write_handoff('install', work, a.handoff)
 
 
 def write_receipt(work):
@@ -382,14 +516,23 @@ def main():
     sub = ap.add_subparsers(dest='cmd', required=True)
     b = sub.add_parser('build')
     p = sub.add_parser('prepare')
-    for parser in (b, p):
+    bl = sub.add_parser('build-llvm', help='build LLVM and Clang and write their handoff')
+    br = sub.add_parser('build-rust', help='build Rust on a handed-off LLVM and write the install handoff')
+    for parser in (b, p, bl, br):
         parser.add_argument('--rust', type=Path, required=True, help='pinned Rust Git repository')
         parser.add_argument('--llvm', type=Path, required=True, help='pinned LLVM Project Git repository')
         parser.add_argument('--rust-source', type=Path, help='use a local copy of the locked Rust source archive')
+    for parser in (b, bl, br):
+        parser.add_argument('--jobs', type=int, default=2)
+    for parser in (bl, br):
+        parser.add_argument('--handoff', type=Path, required=True, help='directory for the handoff archive and manifest')
+    br.add_argument('--from', type=Path, required=True, help='directory holding the LLVM handoff')
+    restore = sub.add_parser('restore', help='unpack and verify a handoff into Q2_X2000_WORK')
+    restore.add_argument('stage', choices=['llvm', 'install'])
+    restore.add_argument('--from', type=Path, required=True, help='directory holding the handoff')
     sources = sub.add_parser('check-sources')
     sources.add_argument('--rust', type=Path, required=True)
     sources.add_argument('--llvm', type=Path, required=True)
-    b.add_argument('--jobs', type=int, default=2)
     runtime = sub.add_parser('profile-runtime', help='add the compiler-rt profile runtime to the installed compiler')
     runtime.add_argument('--sdk', type=Path, required=True, help='relocated q2-os SDK')
     runtime.add_argument('--sdk-archive-sha256', required=True, help='SHA-256 of the SDK release archive')
@@ -403,6 +546,12 @@ def main():
     a = ap.parse_args()
     if a.cmd == 'build':
         build(a)
+    elif a.cmd == 'build-llvm':
+        build_llvm(a)
+    elif a.cmd == 'build-rust':
+        build_rust(a)
+    elif a.cmd == 'restore':
+        restore_handoff(a.stage, work_dir(), getattr(a, 'from'))
     elif a.cmd == 'prepare':
         print(prepare(work_dir(), a.rust, a.llvm, a.rust_source))
     elif a.cmd == 'check-sources':
