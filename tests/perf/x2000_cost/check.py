@@ -12,7 +12,11 @@ CPU x2000; the X2000 costs and lowering with generic scheduling), then:
 
 OUT/bench-scalar, OUT/bench-x2000 and OUT/bench-gensched are Q2 executables. On the Q2 they print
 the time per element of each function, which is the test of the cost
-model's decisions (device.py runs both and prints the ratios).
+model's decisions. q2-factory `gates/perf/x2000_cost_device.py loops` runs
+them on the device and prints the ratios:
+
+  gates/perf/x2000_cost_device.py --out build/x2000-cost/q2-loops-01 loops \\
+      scalar=OUT/bench-scalar x2000=OUT/bench-x2000 gensched=OUT/bench-gensched
 
 Exit status 1 on an unmet expectation or a differing hash.
 """
