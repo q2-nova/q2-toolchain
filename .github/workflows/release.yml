@@ -1,0 +1,77 @@
+name: Stage a compiler release
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Validate with a generated fixture or stage a reviewed compiler draft
+        type: choice
+        required: true
+        options: [validate, stage]
+      producer:
+        description: Exact Git commit of the compiler build recipe
+        type: string
+        required: true
+      source_tag:
+        description: Intake draft tag containing the reviewed bundle and qualification record
+        type: string
+      draft_tag:
+        description: Unused tag for the release draft
+        type: string
+      bundle_sha256:
+        description: SHA-256 of the reviewed compiler.tar.gz
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: inputs.mode == 'validate'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      PRODUCER: ${{ inputs.producer }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Exercise release admission without publishing
+        run: python3 tools/compiler_release.py fixture-test --producer "$PRODUCER"
+
+  stage-draft:
+    if: inputs.mode == 'stage' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PRODUCER: ${{ inputs.producer }}
+      SOURCE_TAG: ${{ inputs.source_tag }}
+      DRAFT_TAG: ${{ inputs.draft_tag }}
+      BUNDLE_SHA256: ${{ inputs.bundle_sha256 }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify reviewed assets and stage a release draft
+        run: |
+          [[ $PRODUCER =~ ^[0-9a-f]{40}$ ]]
+          [[ $BUNDLE_SHA256 =~ ^[0-9a-f]{64}$ ]]
+          [[ $SOURCE_TAG =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]+$ && $DRAFT_TAG =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]+$ ]]
+          [[ $SOURCE_TAG != "$DRAFT_TAG" ]]
+          git merge-base --is-ancestor "$PRODUCER" HEAD
+          metadata=$(gh release view "$SOURCE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft)
+          [[ $(jq -r .isDraft <<< "$metadata") = true ]]
+          assets=$(mktemp -d)
+          gh release download "$SOURCE_TAG" --repo "$GITHUB_REPOSITORY" --dir "$assets" \
+            --pattern compiler.tar.gz --pattern qualification.json
+          python3 tools/compiler_release.py verify --producer "$PRODUCER" --sha256 "$BUNDLE_SHA256" \
+            --bundle "$assets/compiler.tar.gz" --report "$assets/qualification.json"
+          printf 'Producer recipe: `%s`\n\nCompiler archive SHA-256: `%s`\n' "$PRODUCER" "$BUNDLE_SHA256" > "$assets/notes.md"
+          gh release create "$DRAFT_TAG" "$assets/compiler.tar.gz" "$assets/qualification.json" \
+            --repo "$GITHUB_REPOSITORY" --target "$PRODUCER" --draft \
+            --title "X2000 compiler $DRAFT_TAG" --notes-file "$assets/notes.md"

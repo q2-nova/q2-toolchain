@@ -1,13 +1,13 @@
 name: Toolchain controls
 
 on:
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: toolchain-check-${{ github.event.pull_request.number }}
+  group: toolchain-check-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
