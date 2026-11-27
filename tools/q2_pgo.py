@@ -138,9 +138,12 @@ def instrument_flags(profiles, runtime_archive, continuous=False):
     needs: the counters then live in the mapped profile file, so a daemon that
     is killed or replaces itself with exec keeps its counts. Counter layout and
     function hashes are the same, so the profile fits the release build.
+    Continuous mode writes no value-profile data, so it also turns off value
+    profiling (indirect-call targets); otherwise the records name value sites
+    that the raw profile lacks and llvm-profdata refuses it as truncated.
     """
     return ['-Cprofile-generate=' + str(profiles), '-Zno-profiler-runtime',
-            *(['-Cllvm-args=-runtime-counter-relocation'] if continuous else []),
+            *(['-Cllvm-args=-runtime-counter-relocation', '-Cllvm-args=-disable-vp'] if continuous else []),
             '-Clink-arg=-Wl,--whole-archive', '-Clink-arg=' + str(runtime_archive),
             '-Clink-arg=-Wl,--no-whole-archive', '-Clink-arg=-lc']
 

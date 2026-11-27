@@ -108,8 +108,8 @@ class Flags(unittest.TestCase):
                                      '-Clink-arg=-Wl,--no-whole-archive', '-Clink-arg=-lc'])
         self.assertEqual(q2_pgo.use_flags(Path('/x.profdata')), ['-Cprofile-use=/x.profdata'])
         continuous = q2_pgo.instrument_flags(Path('/p'), Path('/rt.a'), continuous=True)
-        self.assertEqual(continuous[2], '-Cllvm-args=-runtime-counter-relocation')
-        self.assertEqual(continuous[3:], flags[2:])
+        self.assertEqual(continuous[2:4], ['-Cllvm-args=-runtime-counter-relocation', '-Cllvm-args=-disable-vp'])
+        self.assertEqual(continuous[4:], flags[2:])
 
     def test_feature_set_digest_is_the_build_record_formula(self):
         import hashlib
