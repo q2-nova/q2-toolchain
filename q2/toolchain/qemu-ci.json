@@ -1,0 +1,17 @@
+{
+  "repository": "https://github.com/q2-nova/qemu.git",
+  "commit": "8e082e052da25320cccd7356e0a441b863b38879",
+  "runner": "ubuntu-24.04",
+  "targets": ["mipsel-softmmu", "mipsel-linux-user"],
+  "packages": [
+    "build-essential", "ninja-build", "python3", "python3-venv", "pkg-config",
+    "libglib2.0-dev", "libpixman-1-dev", "zlib1g-dev", "libfdt-dev",
+    "libslirp-dev", "flex", "bison", "device-tree-compiler",
+    "gcc-mipsel-linux-gnu", "libc6-dev-mipsel-cross"
+  ],
+  "configure": [
+    "--prefix=/usr", "--disable-docs", "--disable-werror", "--enable-slirp",
+    "--enable-fdt=system", "--disable-gtk", "--disable-sdl", "--disable-vnc",
+    "--disable-opengl", "--disable-install-blobs", "--disable-tools"
+  ]
+}
